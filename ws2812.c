@@ -38,7 +38,7 @@ struct ws2812_led {
 
 struct ws2812_leds {
   struct spi_device *spi;
-  uint8_t *rawstream[SPI_BYTE_COUNT];
+  uint8_t rawstream[SPI_BYTE_COUNT];
   struct mutex lock;
   struct ws2812_led leds[]; 
 };
@@ -64,7 +64,7 @@ static void  ws2812_render(struct ws2812_leds* leds)
 
                     for (l = WS2812_SYMBOL_LENGTH; l > 0; l--)               // Symbol
                     {
-                        volatile uint8_t  *byteptr = leds->rawstream[bytepos];    // SPI
+                        volatile uint8_t  *byteptr = &leds->rawstream[bytepos];    // SPI
 
                         *byteptr &= ~(1 << bitpos);
                         if (symbol & (1 << l))
@@ -188,6 +188,7 @@ static int ws2812_probe(struct spi_device *spi)
 	spi->max_speed_hz = WS2812_FREQ * WS2812_SYMBOL_LENGTH;
 
 	leds->spi = spi;
+	spi_setup(spi);
 
 	spi_set_drvdata(spi, leds);
 
