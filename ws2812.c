@@ -94,9 +94,8 @@ static int ws2812_led_brightness_set_blocking(struct led_classdev *cdev,
 	led_mc_calc_color_components(&led->mc_cdev, brightness);
 
 	ws2812_render(leds);
-
+	//add mutex later
 	ret = spi_write(leds->spi, &leds->rawstream ,  SPI_BYTE_COUNT);
-
 	return ret;
 }
 
@@ -116,13 +115,13 @@ static int ws2812_led_register(struct spi_device *spi, struct ws2812_led *led,
 		return 0;
 	}
 
-	ret = of_property_read_u32(np, "color", &color);
+/*	ret = of_property_read_u32(np, "color", &color);
 	if (ret || color != LED_COLOR_ID_MULTI) {
 		dev_warn(dev,
 			 "Node %pOF: must contain 'color' property with value LED_COLOR_ID_MULTI\n",
 			 np);
 		return 0;
-	}
+	} */
 
 	led->subled_info[0].color_index = LED_COLOR_ID_RED;
 	led->subled_info[0].channel = 0;
@@ -177,10 +176,10 @@ static int ws2812_probe(struct spi_device *spi)
 	leds = devm_kzalloc(&spi->dev, struct_size(leds, leds, count), GFP_KERNEL);
 
 
-	if (!leds)
+	if (!leds){
 		dev_err(dev, "ERROR devm_kzalloc!\n");
 		return -ENOMEM;
-
+	}
 
 
         spi->mode = SPI_MODE_0;
