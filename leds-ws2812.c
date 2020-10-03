@@ -32,22 +32,26 @@ struct ws2812_led {
 	struct led_classdev	ldev;
 	int			id;
 	char			name[sizeof("red-3")]; //red grn bl
-	struct ws2812	*priv;
+	struct ws2812		*priv;
+	u8			brightness;
 	};
 
 struct ws2812 {
+  struct device		*dev;
   struct spi_device	*spi;
-  size_t			count;
+  size_t		count;
   struct mutex		mutex;
-  struct ws2812_led leds[NUM_LEDS*LED_COLOURS];
-  uint8_t rawstream[SPI_BYTE_COUNT];
+  struct ws2812_led 	leds[NUM_LEDS*LED_COLOURS];
+  u8	 		*rawstream;
 };
 
 
 
 
-static void  ws2812_render(struct ws2812 *priv)
+static int  ws2812_render(struct ws2812 *priv)
 {
+    volatile u8	*rawstream = priv->rawstream;
+    int ret;
     int i, k, l;
     int bitpos =  7;
     int bytepos = 0;    // SPI
@@ -61,12 +65,12 @@ static void  ws2812_render(struct ws2812 *priv)
                 {
 
                     uint8_t symbol = SYMBOL_LOW;
-                    if (priv->leds[i].ldev.brightness & (1 << k))
+                    if (priv->leds[i].brightness & (1 << k))
                         symbol = SYMBOL_HIGH;
 
                     for (l = WS2812_SYMBOL_LENGTH; l > 0; l--)               // Symbol
                     {
-                        volatile uint8_t  *byteptr = &priv->rawstream[bytepos];    // SPI
+                        volatile u8  *byteptr = &rawstream[bytepos];    // SPI
 
                         *byteptr &= ~(1 << bitpos);
                         if (symbol & (1 << l))
@@ -81,6 +85,7 @@ static void  ws2812_render(struct ws2812 *priv)
                     }
                 }
 
+	return spi_write(priv->spi, priv->rawstream, SPI_BYTE_COUNT);
 }
 
 
@@ -96,8 +101,8 @@ static int ws2812_set_brightness(struct led_classdev *ldev,
 	int ret;
 
 	mutex_lock(&led->priv->mutex);
-  	ws2812_render(led->priv);
-	ret = spi_write(led->priv->spi, (const u8 *)&led->priv->rawstream, SPI_BYTE_COUNT);
+	led->brightness = (u8)brightness;
+  	ret = ws2812_render(led->priv);
 	mutex_unlock(&led->priv->mutex);
 
 	return ret;
@@ -109,29 +114,35 @@ static int ws2812_probe(struct spi_device *spi)
 	struct ws2812_led	*led;
 	int i, ret;
 
-	priv = devm_kzalloc(&spi->dev, sizeof(*priv), GFP_KERNEL);
+	priv = devm_kzalloc(&spi->dev, struct_size(priv,leds, NUM_LEDS*LED_COLOURS), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
+	priv->rawstream = devm_kzalloc(&spi->dev, SPI_BYTE_COUNT, GFP_KERNEL);
 
+	if (!priv->rawstream)
+		return -ENOMEM;
 
   	spi->mode = SPI_MODE_0;
   	spi->bits_per_word = 8;
   	spi->max_speed_hz = WS2812_FREQ * WS2812_SYMBOL_LENGTH;
 
-
+	priv->dev = &spi->dev;
+	priv->spi = spi;
+	priv->count = NUM_LEDS*LED_COLOURS;
 
 	for (i = 0; i < NUM_LEDS*LED_COLOURS; i++) {
 		led		= &priv->leds[i];
 		led->id		= i;
 		led->priv	= priv;
 		// we split names later here in red,grn,blu
-		if (i % 3 == 0) snprintf(led->name, sizeof(led->name), "red-%d", (i/3));
-		if (i % 3 == 1) snprintf(led->name, sizeof(led->name), "grn-%d", (i/3));
+		if (i % 3 == 0) snprintf(led->name, sizeof(led->name), "grn-%d", (i/3));
+		if (i % 3 == 1) snprintf(led->name, sizeof(led->name), "red-%d", (i/3));
 		if (i % 3 == 2) snprintf(led->name, sizeof(led->name), "blu-%d", (i/3));
 
 		mutex_init(&led->priv->mutex);
 		led->ldev.name = led->name;
 		led->ldev.brightness = LED_OFF;
+		led->brightness = 0;
 		led->ldev.max_brightness = 0xff;
 		led->ldev.brightness_set_blocking = ws2812_set_brightness;
 		ret = led_classdev_register(&spi->dev, &led->ldev);
