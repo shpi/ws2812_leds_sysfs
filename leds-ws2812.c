@@ -27,7 +27,7 @@
 struct ws2812_led {
 	struct led_classdev	ldev;
 	int			id;
-	char			name[sizeof("ws2812-red-3")]; //red grn bl
+	char			name[sizeof("ws2812-red-00")]; //red grn bl
 	struct ws2812		*priv;
 	u8			brightness;
 	};
@@ -129,10 +129,12 @@ static int ws2812_probe(struct spi_device *spi)
 		//strncpy(color_order, "GRB", 3);
 
 
-	led_bit_count = ((num_leds * LED_COLOURS * 8 * 3) + ((LED_RESET_US * \
+	led_bit_count = ((num_leds * LED_COLOURS * 8 * WS2812_SYMBOL_LENGTH) + ((LED_RESET_US * \
                                                   (WS2812_FREQ * WS2812_SYMBOL_LENGTH)) / 1000000));
 
 	spi_byte_count = ((((led_bit_count >> 3) & ~0x7) + 4) + 4);
+  
+       dev_err(&spi->dev,"WS2812 Buffer size:%d\n",spi_byte_count);
 
 
 	priv = devm_kzalloc(&spi->dev, struct_size(priv, leds, num_leds*LED_COLOURS), GFP_KERNEL);
@@ -148,14 +150,13 @@ static int ws2812_probe(struct spi_device *spi)
   	spi->mode = SPI_MODE_0;
   	spi->bits_per_word = 8;
   	spi->max_speed_hz = WS2812_FREQ * WS2812_SYMBOL_LENGTH;
-
 	priv->dev = &spi->dev;
 	priv->spi = spi;
-	
+
 	priv->num_leds = num_leds; 
 	//priv->led_bit_count = led_bit_count;
 	priv->spi_byte_count = spi_byte_count;
-	
+
 	for (i = 0; i < num_leds*LED_COLOURS; i++) {
 
 		led		= &priv->leds[i];
@@ -179,6 +180,7 @@ static int ws2812_probe(struct spi_device *spi)
 	}
 
 	spi_set_drvdata(spi, priv);
+	ws2812_render(priv);
 
 	return 0;
 

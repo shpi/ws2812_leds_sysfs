@@ -16,7 +16,7 @@
 #define WS2812_SYMBOL_LENGTH			 4
 #define LED_COLOURS                              3
 #define LED_RESET_US                             60
-#define LED_BIT_COUNT 		                 ((NUM_LEDS * LED_COLOURS * 8 * 3) + ((LED_RESET_US * \
+#define LED_BIT_COUNT 		                 ((NUM_LEDS * LED_COLOURS * 8 * WS2812_SYMBOL_LENGTH) + ((LED_RESET_US * \
                                                   (WS2812_FREQ * WS2812_SYMBOL_LENGTH)) / 1000000))
 
 #define LED_RESET_WAIT_TIME                      300
@@ -27,7 +27,7 @@
 
 /*  data transmission time (TH+TL=1.25µs±600ns) */
 
-#define NUM_LEDS                                1
+#define NUM_LEDS                                29
 
 
 
@@ -58,7 +58,7 @@ void  ws2812_render(struct ws2812_led* led)
                 for (k = 7; k >= 0; k--)                   // Bit
                 {
                     uint8_t symbol = SYMBOL_LOW;
-                    if (led->leds[i][j] & (1 << k))
+                    if (led->leds[0][j] & (1 << k))
                         symbol = SYMBOL_HIGH;
 
                     for (l = WS2812_SYMBOL_LENGTH; l > 0; l--)               // Symbol
