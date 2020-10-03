@@ -14,8 +14,6 @@
 #include <linux/of.h>
 
 
-
-
 #define WS2812_SYMBOL_LENGTH                     4
 #define LED_COLOURS                              3
 #define LED_RESET_US                             60
@@ -37,7 +35,7 @@ struct ws2812_led {
 
 struct ws2812 {
   struct device		*dev;
-  struct spi_device	*spi
+  struct spi_device	*spi;
   struct mutex		mutex;
   u8                    *rawstream;
   int                   num_leds;
@@ -51,7 +49,6 @@ struct ws2812 {
 static int  ws2812_render(struct ws2812 *priv)
 {
     volatile u8	*rawstream = priv->rawstream;
-    int ret;
     int i, k, l;
     int bitpos =  7;
     int bytepos = 0;    // SPI
@@ -112,25 +109,27 @@ static int ws2812_probe(struct spi_device *spi)
 {
 	struct ws2812		*priv;
 	struct ws2812_led	*led;
-	char			color_order[3]; //RGB,  GRB, ...
-	int i, ret, num_leds, spi_byte_count;
+	const char		*color_order; //RGB,  GRB, ...
+	int i, ret, spi_byte_count;
+	u16	num_leds;
 	long led_bit_count;
 
 
 
-	ret = device_property_read_u16(spi->dev, "num-leds", &num_leds);
+	ret = device_property_read_u16(&spi->dev, "num-leds", &num_leds);
 	if (ret < 0)
 		num_leds = 1;
 
-        ret = device_property_read_string(spi->dev, "color-order", &color_order);
+        ret = device_property_read_string(&spi->dev, "color-order", &color_order);
         if (ret < 0)
-		strncpy(color_order, "GRB", 3);
+		color_order = "GRB";
+		//strncpy(color_order, "GRB", 3);
 
 
 	led_bit_count = ((num_leds * LED_COLOURS * 8 * 3) + ((LED_RESET_US * \
-                                                  (WS2812_FREQ * WS2812_SYMBOL_LENGTH)) / 1000000))
+                                                  (WS2812_FREQ * WS2812_SYMBOL_LENGTH)) / 1000000));
 
-	spi_byte_count = ((((led_bit_count >> 3) & ~0x7) + 4) + 4)
+	spi_byte_count = ((((led_bit_count >> 3) & ~0x7) + 4) + 4);
 
 
 	priv = devm_kzalloc(&spi->dev, struct_size(priv, leds, num_leds*LED_COLOURS), GFP_KERNEL);
@@ -191,7 +190,7 @@ static int ws2812_remove(struct spi_device *spi)
 	struct ws2812	*priv = spi_get_drvdata(spi);
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(priv->leds); i++)
+	for (i = 0; i < (priv->num_leds*LED_COLOURS); i++)
 		led_classdev_unregister(&priv->leds[i].ldev);
 
 	return 0;
