@@ -111,14 +111,17 @@ static int ws2812_probe(struct spi_device *spi)
 	struct ws2812_led	*led;
 	const char		*color_order; //RGB,  GRB, ...
 	int i, ret, spi_byte_count;
-	u16	num_leds;
+	int	num_leds;
 	long led_bit_count;
 
 
 
-	ret = device_property_read_u16(&spi->dev, "num-leds", &num_leds);
+	ret = device_property_read_u32(&spi->dev, "num-leds", &num_leds);
 	if (ret < 0)
 		num_leds = 1;
+
+	dev_err(&spi->dev,"Number of WS2812 to be registered:%d\n",num_leds);
+
 
         ret = device_property_read_string(&spi->dev, "color-order", &color_order);
         if (ret < 0)
@@ -154,6 +157,7 @@ static int ws2812_probe(struct spi_device *spi)
 	priv->spi_byte_count = spi_byte_count;
 	
 	for (i = 0; i < num_leds*LED_COLOURS; i++) {
+
 		led		= &priv->leds[i];
 		led->id		= i;
 		led->priv	= priv;
