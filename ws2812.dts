@@ -50,6 +50,7 @@
 				pinctrl-names = "default"; */
                                 spi-max-frequency = <125000000>;
 				num-leds = <29>;
+				color-order= "GRB"; 
 				#address-cells = <1>;
 	                        #size-cells = <0>;
 

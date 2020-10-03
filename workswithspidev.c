@@ -58,7 +58,7 @@ void  ws2812_render(struct ws2812_led* led)
                 for (k = 7; k >= 0; k--)                   // Bit
                 {
                     uint8_t symbol = SYMBOL_LOW;
-                    if (led->leds[0][j] & (1 << k))
+                    if (led->leds[i][j] & (1 << k))
                         symbol = SYMBOL_HIGH;
 
                     for (l = WS2812_SYMBOL_LENGTH; l > 0; l--)               // Symbol
