@@ -11,38 +11,38 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/spi/spi.h>
+#include <linux/of.h>
+
+
 
 
 #define WS2812_SYMBOL_LENGTH                     4
 #define LED_COLOURS                              3
 #define LED_RESET_US                             60
-#define LED_BIT_COUNT                            ((NUM_LEDS * LED_COLOURS * 8 * 3) + ((LED_RESET_US * \
-                                                  (WS2812_FREQ * WS2812_SYMBOL_LENGTH)) / 1000000))
-
 #define LED_RESET_WAIT_TIME                      300
-#define SPI_BYTE_COUNT                         ((((LED_BIT_COUNT >> 3) & ~0x7) + 4) + 4)
 #define SYMBOL_HIGH                              0b1100 // 0.6us high 0.6us low
 #define SYMBOL_LOW                               0b1000 // 0.3us high, 0.9us low
 #define WS2812_FREQ                             800000
-#define NUM_LEDS                                1
 
 
 
 struct ws2812_led {
 	struct led_classdev	ldev;
 	int			id;
-	char			name[sizeof("red-3")]; //red grn bl
+	char			name[sizeof("ws2812-red-3")]; //red grn bl
 	struct ws2812		*priv;
 	u8			brightness;
 	};
 
+
 struct ws2812 {
   struct device		*dev;
-  struct spi_device	*spi;
-  size_t		count;
+  struct spi_device	*spi
   struct mutex		mutex;
-  struct ws2812_led 	leds[NUM_LEDS*LED_COLOURS];
-  u8	 		*rawstream;
+  u8                    *rawstream;
+  int                   num_leds;
+  int			spi_byte_count;
+  struct ws2812_led 	leds[];
 };
 
 
@@ -55,7 +55,7 @@ static int  ws2812_render(struct ws2812 *priv)
     int i, k, l;
     int bitpos =  7;
     int bytepos = 0;    // SPI
-    int z = NUM_LEDS*LED_COLOURS;
+    int z = priv->num_leds*LED_COLOURS;
 
 
     for (i = 0; i < z; i++)                // Leds * Colorchannels
@@ -85,7 +85,7 @@ static int  ws2812_render(struct ws2812 *priv)
                     }
                 }
 
-	return spi_write(priv->spi, priv->rawstream, SPI_BYTE_COUNT);
+	return spi_write(priv->spi, priv->rawstream, priv->spi_byte_count);
 }
 
 
@@ -112,12 +112,33 @@ static int ws2812_probe(struct spi_device *spi)
 {
 	struct ws2812		*priv;
 	struct ws2812_led	*led;
-	int i, ret;
+	char			color_order[3]; //RGB,  GRB, ...
+	int i, ret, num_leds, spi_byte_count;
+	long led_bit_count;
 
-	priv = devm_kzalloc(&spi->dev, struct_size(priv,leds, NUM_LEDS*LED_COLOURS), GFP_KERNEL);
+
+
+	ret = device_property_read_u16(spi->dev, "num-leds", &num_leds);
+	if (ret < 0)
+		num_leds = 1;
+
+        ret = device_property_read_string(spi->dev, "color-order", &color_order);
+        if (ret < 0)
+		strncpy(color_order, "GRB", 3);
+
+
+	led_bit_count = ((num_leds * LED_COLOURS * 8 * 3) + ((LED_RESET_US * \
+                                                  (WS2812_FREQ * WS2812_SYMBOL_LENGTH)) / 1000000))
+
+	spi_byte_count = ((((led_bit_count >> 3) & ~0x7) + 4) + 4)
+
+
+	priv = devm_kzalloc(&spi->dev, struct_size(priv, leds, num_leds*LED_COLOURS), GFP_KERNEL);
+
 	if (!priv)
 		return -ENOMEM;
-	priv->rawstream = devm_kzalloc(&spi->dev, SPI_BYTE_COUNT, GFP_KERNEL);
+
+	priv->rawstream = devm_kzalloc(&spi->dev, spi_byte_count, GFP_KERNEL);
 
 	if (!priv->rawstream)
 		return -ENOMEM;
@@ -128,16 +149,20 @@ static int ws2812_probe(struct spi_device *spi)
 
 	priv->dev = &spi->dev;
 	priv->spi = spi;
-	priv->count = NUM_LEDS*LED_COLOURS;
-
-	for (i = 0; i < NUM_LEDS*LED_COLOURS; i++) {
+	
+	priv->num_leds = num_leds; 
+	//priv->led_bit_count = led_bit_count;
+	priv->spi_byte_count = spi_byte_count;
+	
+	for (i = 0; i < num_leds*LED_COLOURS; i++) {
 		led		= &priv->leds[i];
 		led->id		= i;
 		led->priv	= priv;
 		// we split names later here in red,grn,blu
-		if (i % 3 == 0) snprintf(led->name, sizeof(led->name), "grn-%d", (i/3));
-		if (i % 3 == 1) snprintf(led->name, sizeof(led->name), "red-%d", (i/3));
-		if (i % 3 == 2) snprintf(led->name, sizeof(led->name), "blu-%d", (i/3));
+
+		if (color_order[i % 3] == 'G') snprintf(led->name, sizeof(led->name), "ws2812-grn-%d", (i/3));
+		if (color_order[i % 3] == 'R') snprintf(led->name, sizeof(led->name), "ws2812-red-%d", (i/3));
+		if (color_order[i % 3] == 'B') snprintf(led->name, sizeof(led->name), "ws2812-blu-%d", (i/3));
 
 		mutex_init(&led->priv->mutex);
 		led->ldev.name = led->name;
