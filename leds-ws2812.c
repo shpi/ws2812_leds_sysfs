@@ -61,7 +61,7 @@ static void  ws2812_render(struct ws2812 *priv)
                 {
 
                     uint8_t symbol = SYMBOL_LOW;
-                    if ((uint8_t)priv->leds[i].ldev.brightness & (1 << k))
+                    if (priv->leds[i].ldev.brightness & (1 << k))
                         symbol = SYMBOL_HIGH;
 
                     for (l = WS2812_SYMBOL_LENGTH; l > 0; l--)               // Symbol
@@ -124,8 +124,11 @@ static int ws2812_probe(struct spi_device *spi)
 		led		= &priv->leds[i];
 		led->id		= i;
 		led->priv	= priv;
-		// we split names later here in red,grn,blu 
-		snprintf(led->name, sizeof(led->name), "red-%d", i);
+		// we split names later here in red,grn,blu
+		if (i % 3 == 0) snprintf(led->name, sizeof(led->name), "red-%d", (i/3));
+		if (i % 3 == 1) snprintf(led->name, sizeof(led->name), "grn-%d", (i/3));
+		if (i % 3 == 2) snprintf(led->name, sizeof(led->name), "blu-%d", (i/3));
+
 		mutex_init(&led->priv->mutex);
 		led->ldev.name = led->name;
 		led->ldev.brightness = LED_OFF;
