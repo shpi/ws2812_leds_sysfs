@@ -12,7 +12,8 @@
 #include <linux/slab.h>
 #include <linux/spi/spi.h>
 #include <linux/of.h>
-
+#include <linux/types.h>
+#include <asm/io.h>
 
 #define WS2812_SYMBOL_LENGTH                     4
 #define LED_COLOURS                              3
@@ -20,7 +21,15 @@
 #define LED_RESET_WAIT_TIME                      300
 #define SYMBOL_HIGH                              0b1100 // 0.6us high 0.6us low
 #define SYMBOL_LOW                               0b1000 // 0.3us high, 0.9us low
-#define WS2812_FREQ                             800000
+#define WS2812_FREQ                              800000
+
+
+#define GPREN0		          		0x4c    /* Pin Rising Edge Detect Enable */
+#define GPREN1          			0x50    /* Pin Rising Edge Detect Enable */
+#define GPFSEL          			0x00    /* function selector */
+#define BCM2708_PERI_BASE        		0x20000000
+#define GPIO_BASE                		(BCM2708_PERI_BASE + 0x200000) /* GPIO controller */
+
 
 
 
@@ -29,20 +38,43 @@ struct ws2812_led {
 	int			id;
 	char			name[sizeof("ws2812-red-00")]; //red grn bl
 	struct ws2812		*priv;
-	u8			brightness;
 	};
 
 
 struct ws2812 {
-  struct device		*dev;
+  // struct device		*dev;
   struct spi_device	*spi;
   struct mutex		mutex;
   u8                    *rawstream;
+  int			is_zero_lite;
   int                   num_leds;
   int			spi_byte_count;
   struct ws2812_led 	leds[];
 };
 
+
+
+static void set_gpio_mode(uint8_t pin, uint8_t mode)
+{       int regnum = pin / 10;
+        int offset = (pin % 10) * 3;
+        uint8_t funcmap[] = { 4, 5, 6, 7, 3, 2, 1, 0 }; /* 4 -> ALT0 , 0 -> input, 1 -> output */
+        void __iomem *regs2 = ioremap(GPIO_BASE + GPFSEL + (regnum*4),  4);
+        uint32_t gpfsel = readl(regs2);
+        gpfsel &= ~(0x7 << offset);
+        gpfsel |= ((funcmap[mode]) << offset);
+        writel(gpfsel, regs2);
+        iounmap(regs2);
+}
+static void set_gpio_ren(uint8_t pin, uint8_t mode) /* rising edge detection */
+{       int regnum = pin >> 5;
+        int offset = (pin & 0x1f);
+        void __iomem *regs = ioremap(GPIO_BASE + GPFSEL + GPREN0 + (4*regnum),  4);
+        uint32_t ren = readl(regs);
+        if (mode) ren |= (1 << offset);
+        else ren &= (0xFFFFFFFF & (0 << offset));
+        writel(ren, regs);
+        iounmap(regs); 
+}
 
 
 
@@ -53,7 +85,7 @@ static int  ws2812_render(struct ws2812 *priv)
     int bitpos =  7;
     int bytepos = 0;    // SPI
     int z = priv->num_leds*LED_COLOURS;
-
+    int ret;
 
     for (i = 0; i < z; i++)                // Leds * Colorchannels
         {
@@ -62,7 +94,7 @@ static int  ws2812_render(struct ws2812 *priv)
                 {
 
                     uint8_t symbol = SYMBOL_LOW;
-                    if (priv->leds[i].brightness & (1 << k))
+                    if (priv->leds[i].ldev.brightness & (1 << k))
                         symbol = SYMBOL_HIGH;
 
                     for (l = WS2812_SYMBOL_LENGTH; l > 0; l--)               // Symbol
@@ -82,13 +114,25 @@ static int  ws2812_render(struct ws2812 *priv)
                     }
                 }
 
-	return spi_write(priv->spi, priv->rawstream, priv->spi_byte_count);
+	if (priv->is_zero_lite > 0) {
+		set_gpio_mode(10,0);
+		set_gpio_ren(10,0);}
+	
+
+	ret = spi_write(priv->spi, priv->rawstream, priv->spi_byte_count);
+
+	if (priv->is_zero_lite > 0)	{
+		set_gpio_mode(10,7);
+		set_gpio_ren(10,1);
+	}
+
+	return ret;
 }
 
 
 
 
-static int ws2812_set_brightness(struct led_classdev *ldev,
+static void ws2812_set_brightness(struct led_classdev *ldev,
 				      enum led_brightness brightness)
 {
 	struct ws2812_led *led = container_of(ldev, struct ws2812_led,
@@ -97,20 +141,37 @@ static int ws2812_set_brightness(struct led_classdev *ldev,
 
 	int ret;
 
-	mutex_lock(&led->priv->mutex);
-	led->brightness = (u8)brightness;
   	ret = ws2812_render(led->priv);
-	mutex_unlock(&led->priv->mutex);
 
-	return ret;
+
 }
+
+
+
+static int ws2812_set_brightness_blocking(struct led_classdev *ldev,
+                                      enum led_brightness brightness)
+{
+        struct ws2812_led *led = container_of(ldev, struct ws2812_led,
+                                                  ldev);
+
+
+        int ret;
+
+        mutex_lock(&led->priv->mutex);
+        ret = ws2812_render(led->priv);
+        mutex_unlock(&led->priv->mutex);
+
+        return ret;
+}
+
+
 
 static int ws2812_probe(struct spi_device *spi)
 {
 	struct ws2812		*priv;
 	struct ws2812_led	*led;
 	const char		*color_order; //RGB,  GRB, ...
-	int i, ret, spi_byte_count;
+	int i, ret, spi_byte_count, is_zero_lite;
 	int	num_leds;
 	long led_bit_count;
 
@@ -133,8 +194,8 @@ static int ws2812_probe(struct spi_device *spi)
                                                   (WS2812_FREQ * WS2812_SYMBOL_LENGTH)) / 1000000));
 
 	spi_byte_count = ((((led_bit_count >> 3) & ~0x7) + 4) + 4);
-  
-       dev_err(&spi->dev,"WS2812 Buffer size:%d\n",spi_byte_count);
+
+        dev_err(&spi->dev,"WS2812 Buffer size:%d\n",spi_byte_count);
 
 
 	priv = devm_kzalloc(&spi->dev, struct_size(priv, leds, num_leds*LED_COLOURS), GFP_KERNEL);
@@ -150,11 +211,17 @@ static int ws2812_probe(struct spi_device *spi)
   	spi->mode = SPI_MODE_0;
   	spi->bits_per_word = 8;
   	spi->max_speed_hz = WS2812_FREQ * WS2812_SYMBOL_LENGTH;
-	priv->dev = &spi->dev;
+	//priv->dev = &spi->dev;
 	priv->spi = spi;
 
+	is_zero_lite = 0;
+
+	if (device_property_read_bool(&spi->dev, "is-zero-lite")) 
+		is_zero_lite = 1;
+
+	priv->is_zero_lite = is_zero_lite;
+
 	priv->num_leds = num_leds; 
-	//priv->led_bit_count = led_bit_count;
 	priv->spi_byte_count = spi_byte_count;
 
 	for (i = 0; i < num_leds*LED_COLOURS; i++) {
@@ -171,9 +238,10 @@ static int ws2812_probe(struct spi_device *spi)
 		mutex_init(&led->priv->mutex);
 		led->ldev.name = led->name;
 		led->ldev.brightness = LED_OFF;
-		led->brightness = 0;
 		led->ldev.max_brightness = 0xff;
-		led->ldev.brightness_set_blocking = ws2812_set_brightness;
+		led->ldev.brightness_set_blocking = ws2812_set_brightness_blocking;
+                led->ldev.brightness_set = ws2812_set_brightness;
+
 		ret = led_classdev_register(&spi->dev, &led->ldev);
 		if (ret < 0)
 			goto eledcr;
