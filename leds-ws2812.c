@@ -24,13 +24,14 @@
 #define WS2812_FREQ                              800000
 
 
+/* constans below for SHPI.zero lite, for setting MOSI as Input
+ * and disable RISING EDGE detection while sending colors */
+
 #define GPREN0		          		0x4c    /* Pin Rising Edge Detect Enable */
 #define GPREN1          			0x50    /* Pin Rising Edge Detect Enable */
 #define GPFSEL          			0x00    /* function selector */
 #define BCM2708_PERI_BASE        		0x20000000
 #define GPIO_BASE                		(BCM2708_PERI_BASE + 0x200000) /* GPIO controller */
-
-
 
 
 struct ws2812_led {
@@ -42,11 +43,10 @@ struct ws2812_led {
 
 
 struct ws2812 {
-  // struct device		*dev;
   struct spi_device	*spi;
   struct mutex		mutex;
   u8                    *rawstream;
-  int			is_zero_lite;
+  u8			is_zero_lite;
   int                   num_leds;
   int			spi_byte_count;
   struct ws2812_led 	leds[];
@@ -116,8 +116,9 @@ static int  ws2812_render(struct ws2812 *priv)
 
 	if (priv->is_zero_lite > 0) {
 		set_gpio_mode(10,0);
-		set_gpio_ren(10,0);}
-	
+		set_gpio_ren(10,0);
+	}
+
 
 	ret = spi_write(priv->spi, priv->rawstream, priv->spi_byte_count);
 
@@ -129,22 +130,6 @@ static int  ws2812_render(struct ws2812 *priv)
 	return ret;
 }
 
-
-
-
-static void ws2812_set_brightness(struct led_classdev *ldev,
-				      enum led_brightness brightness)
-{
-	struct ws2812_led *led = container_of(ldev, struct ws2812_led,
-						  ldev);
-
-
-	int ret;
-
-  	ret = ws2812_render(led->priv);
-
-
-}
 
 
 
@@ -171,9 +156,10 @@ static int ws2812_probe(struct spi_device *spi)
 	struct ws2812		*priv;
 	struct ws2812_led	*led;
 	const char		*color_order; //RGB,  GRB, ...
-	int i, ret, spi_byte_count, is_zero_lite;
-	int	num_leds;
-	long led_bit_count;
+	int 			i, ret, spi_byte_count;
+	u8 			is_zero_lite;
+	int			num_leds;
+	long 			led_bit_count;
 
 
 
@@ -187,7 +173,6 @@ static int ws2812_probe(struct spi_device *spi)
         ret = device_property_read_string(&spi->dev, "color-order", &color_order);
         if (ret < 0)
 		color_order = "GRB";
-		//strncpy(color_order, "GRB", 3);
 
 
 	led_bit_count = ((num_leds * LED_COLOURS * 8 * WS2812_SYMBOL_LENGTH) + ((LED_RESET_US * \
@@ -211,17 +196,19 @@ static int ws2812_probe(struct spi_device *spi)
   	spi->mode = SPI_MODE_0;
   	spi->bits_per_word = 8;
   	spi->max_speed_hz = WS2812_FREQ * WS2812_SYMBOL_LENGTH;
-	//priv->dev = &spi->dev;
 	priv->spi = spi;
 
 	is_zero_lite = 0;
 
-	if (device_property_read_bool(&spi->dev, "is-zero-lite")) 
+	if (device_property_read_bool(&spi->dev, "is-zero-lite"))
+	{
 		is_zero_lite = 1;
+		dev_err(&spi->dev,"WS2812, setup as Zero Lite: %d\n",is_zero_lite);
 
+	}
 	priv->is_zero_lite = is_zero_lite;
 
-	priv->num_leds = num_leds; 
+	priv->num_leds = num_leds;
 	priv->spi_byte_count = spi_byte_count;
 
 	for (i = 0; i < num_leds*LED_COLOURS; i++) {
@@ -229,20 +216,19 @@ static int ws2812_probe(struct spi_device *spi)
 		led		= &priv->leds[i];
 		led->id		= i;
 		led->priv	= priv;
-		// we split names later here in red,grn,blu
 
-		if (color_order[i % 3] == 'G') snprintf(led->name, sizeof(led->name), "ws2812-grn-%d", (i/3));
-		if (color_order[i % 3] == 'R') snprintf(led->name, sizeof(led->name), "ws2812-red-%d", (i/3));
-		if (color_order[i % 3] == 'B') snprintf(led->name, sizeof(led->name), "ws2812-blu-%d", (i/3));
+		if (color_order[i % LED_COLOURS] == 'G') snprintf(led->name, sizeof(led->name), "ws2812-grn-%d", (i/LED_COLOURS));
+		if (color_order[i % LED_COLOURS] == 'R') snprintf(led->name, sizeof(led->name), "ws2812-red-%d", (i/LED_COLOURS));
+		if (color_order[i % LED_COLOURS] == 'B') snprintf(led->name, sizeof(led->name), "ws2812-blu-%d", (i/LED_COLOURS));
 
 		mutex_init(&led->priv->mutex);
 		led->ldev.name = led->name;
 		led->ldev.brightness = LED_OFF;
 		led->ldev.max_brightness = 0xff;
 		led->ldev.brightness_set_blocking = ws2812_set_brightness_blocking;
-                led->ldev.brightness_set = ws2812_set_brightness;
 
 		ret = led_classdev_register(&spi->dev, &led->ldev);
+
 		if (ret < 0)
 			goto eledcr;
 	}
